@@ -1,0 +1,569 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useMemo } from 'react';
+import { 
+  Calculator, 
+  RotateCcw, 
+  Moon, 
+  Sun, 
+  CheckCircle2, 
+  AlertTriangle,
+  User,
+  Home as HomeIcon,
+  Users,
+  Plus,
+  Minus,
+  Table as TableIcon,
+  ArrowUpDown,
+  Star
+} from 'lucide-react';
+
+// --- 合法組合窮舉數據 (順序: [未2日, 2上日, 未2夜, 2上夜, 未2全, 2上全]) ---
+const LEGAL_LIST = [
+  ...[[1, 0, 0, 0, 0, 0], [0, 1, 0, 0, 0, 0], [0, 0, 1, 0, 0, 0], [0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 1],
+  [2, 0, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0], [0, 2, 0, 0, 0, 0], [1, 0, 1, 0, 0, 0], [0, 1, 1, 0, 0, 0], [0, 0, 2, 0, 0, 0],
+  [1, 0, 0, 1, 0, 0], [0, 1, 0, 1, 0, 0], [0, 0, 1, 1, 0, 0], [0, 0, 0, 2, 0, 0], [1, 0, 0, 0, 1, 0], [0, 1, 0, 0, 1, 0],
+  [0, 0, 1, 0, 1, 0], [0, 0, 0, 1, 1, 0], [0, 0, 0, 0, 2, 0], [1, 0, 0, 0, 0, 1], [0, 1, 0, 0, 0, 1], [0, 0, 1, 0, 0, 1],
+  [0, 0, 0, 1, 0, 1], [0, 0, 0, 0, 1, 1], [0, 0, 0, 0, 0, 2], [0, 0, 2, 1, 0, 0], [0, 1, 1, 0, 1, 0], [0, 0, 2, 0, 1, 0],
+  [0, 0, 1, 0, 2, 0], [1, 0, 1, 0, 0, 1], [0, 1, 1, 0, 0, 1], [0, 0, 2, 0, 0, 1], [0, 0, 1, 1, 0, 1], [0, 1, 0, 0, 1, 1],
+  [0, 0, 0, 0, 2, 1], [1, 0, 0, 0, 0, 2], [0, 1, 0, 0, 0, 2], [0, 0, 1, 0, 0, 2], [0, 0, 0, 1, 0, 2], [0, 0, 0, 0, 1, 2],
+  [0, 0, 0, 0, 0, 3], [0, 0, 2, 0, 2, 0], [0, 0, 1, 0, 2, 1], [0, 0, 2, 0, 0, 2], [0, 0, 0, 0, 2, 2], [0, 0, 1, 0, 0, 3],
+  [0, 0, 0, 0, 0, 4]]
+].map(row => [row[2], row[5], row[1], row[4], row[0], row[3]]);
+
+// 自孩例外 1-4 (原始 mapping 轉換)
+const SELF_EXCEPTIONS = [
+  [0, 1, 0, 1, 0, 1], // 自孩1: 2上全1, 2上夜1, 2上日1
+  [1, 0, 0, 1, 0, 1], // 自孩2: 未2日1, 2上全1, 2上夜1
+  [1, 0, 0, 1, 1, 0], // 自孩3: 未2全1, 未2日1, 2上夜1
+  [0, 1, 0, 1, 1, 0]  // 自孩4: 未2全1, 2上全1, 2上夜1
+];
+
+const CATEGORIES = [
+  { id: 0, name: '未滿2歲日間', icon: <Sun size={20} className="text-[#F59E0B]"/> },
+  { id: 1, name: '2歲以上日間', icon: <Sun size={20} className="text-[#F59E0B]"/> },
+  { id: 2, name: '未滿2歲夜間', icon: <Moon size={20} className="text-[#6366F1]"/> },
+  { id: 3, name: '2歲以上夜間', icon: <Moon size={20} className="text-[#6366F1]"/> },
+  { id: 4, name: '未滿2歲全日', icon: <HomeIcon size={20} className="text-[#3B82F6]"/> },
+  { id: 5, name: '2歲以上全日', icon: <HomeIcon size={20} className="text-[#3B82F6]"/> }
+];
+
+export default function App() {
+  const [tab, setTab] = useState<'normal' | 'self' | 'joint' | 'list'>('normal');
+  
+  // 獨立狀態管理：確保切換模式時數據不打架
+  const [normalCounts, setNormalCounts] = useState([0, 0, 0, 0, 0, 0]);
+  const [selfCareCounts, setSelfCareCounts] = useState([0, 0, 0, 0, 0, 0]);
+  const [selfProfileCounts, setSelfProfileCounts] = useState([0, 0, 0]); // [未2, 2-3外, 2-3無]
+  const [jointCounts, setJointCounts] = useState([0, 0, 0, 0, 0, 0]);
+
+  // 根據當前模式選擇對應的數據集
+  const currentCounts = tab === 'normal' ? normalCounts : tab === 'self' ? selfCareCounts : jointCounts;
+  
+  // 自孩模式連動邏輯之最小值
+  const curMins = useMemo(() => {
+    if (tab !== 'self') return [0, 0, 0, 0, 0, 0];
+    // 未2自->未2夜(2), 2-3外自->2上夜(3), 2-3無自->2上全(5)
+    return [0, 0, selfProfileCounts[0], selfProfileCounts[1], 0, selfProfileCounts[2]];
+  }, [tab, selfProfileCounts]);
+
+  // 自孩模式是否處於凍結狀態 (自孩總數為0)
+  const isSelfFrozen = tab === 'self' && selfProfileCounts.reduce((a, b) => a + b, 0) === 0;
+
+  const stats = useMemo(() => {
+    let isValid = false;
+    let suggestions: { name: string; extra: number; catIdx: number }[] = [];
+    const totalInput = currentCounts.reduce((a, b) => a + b, 0);
+    const fullList = tab === 'self' ? [...LEGAL_LIST, ...SELF_EXCEPTIONS] : LEGAL_LIST;
+
+    if (tab === 'normal' || tab === 'self') {
+      isValid = fullList.some(row => currentCounts.every((v, i) => v <= row[i]));
+    } else if (tab === 'joint') {
+      const fullNight = currentCounts[2] + currentCounts[3] + currentCounts[4] + currentCounts[5];
+      isValid = (totalInput <= 4) && (fullNight <= 2);
+    } else {
+      isValid = true;
+    }
+
+    if (isValid && (tab === 'normal' || tab === 'self')) {
+      const maxPossible: Record<number, number> = {};
+      fullList.forEach(row => {
+        if (currentCounts.every((v, i) => v <= row[i])) {
+          row.forEach((limit, i) => {
+            const extra = limit - currentCounts[i];
+            if (extra > 0) maxPossible[i] = Math.max(maxPossible[i] || 0, extra);
+          });
+        }
+      });
+      // 依照順序排列建議：日間0,1 夜間2,3 全日4,5
+      suggestions = [0, 1, 2, 3, 4, 5]
+        .filter(idx => maxPossible[idx])
+        .map(idx => ({ name: CATEGORIES[idx].name, extra: maxPossible[idx], catIdx: idx }));
+    }
+
+    return { isValid, totalInput, suggestions };
+  }, [currentCounts, tab]);
+
+  const update = (i: number, v: number) => {
+    if (tab === 'normal') {
+      const n = [...normalCounts];
+      n[i] = Math.max(0, v);
+      setNormalCounts(n);
+    } else if (tab === 'self') {
+      if (isSelfFrozen) return;
+      const n = [...selfCareCounts];
+      n[i] = Math.max(curMins[i], v);
+      setSelfCareCounts(n);
+    } else if (tab === 'joint') {
+      const n = [...jointCounts];
+      n[i] = Math.max(0, v);
+      setJointCounts(n);
+    }
+  };
+
+  const updateSelfProfile = (i: number, v: number) => {
+    const oldMins = [...curMins];
+    const n = [...selfProfileCounts];
+    n[i] = Math.min(2, Math.max(0, v));
+    setSelfProfileCounts(n);
+    
+    // 計算新的最小值
+    const newMins = [0, 0, 0, 0, 0, 0];
+    newMins[2] = n[0]; // 未2
+    newMins[3] = n[1]; // 2-3外
+    newMins[5] = n[2]; // 2-3無
+
+    // 同步更新自孩收托人數的最小值連動
+    const newCounts = [...selfCareCounts];
+    [2, 3, 5].forEach(idx => {
+      if (newCounts[idx] === oldMins[idx] || newCounts[idx] < newMins[idx]) {
+        newCounts[idx] = newMins[idx];
+      }
+    });
+    setSelfCareCounts(newCounts);
+  };
+
+  const reset = () => {
+    setNormalCounts([0, 0, 0, 0, 0, 0]);
+    setSelfCareCounts([0, 0, 0, 0, 0, 0]);
+    setSelfProfileCounts([0, 0, 0]);
+    setJointCounts([0, 0, 0, 0, 0, 0]);
+  };
+
+  return (
+    <div className="h-screen w-screen bg-[#F8FAFC] flex flex-col text-[#1E293B] overflow-hidden font-sans">
+      
+      <header className="h-16 bg-white px-8 flex items-center justify-between border-b border-slate-200 shrink-0">
+        <div className="flex items-center gap-4">
+          <Calculator className="text-[#E34B87]" size={24} />
+          <h1 className="text-xl font-black tracking-tight">收托人數計算機</h1>
+        </div>
+        {tab !== 'list' && (
+          <button onClick={reset} className="flex items-center gap-2 bg-slate-100 px-5 py-1.5 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all text-slate-600">
+             <RotateCcw size={14} /> 重置所有數據
+          </button>
+        )}
+      </header>
+
+      <div className="flex-1 flex overflow-hidden">
+        
+        {/* 左側導覽 */}
+        <aside className="w-64 bg-white border-r border-slate-200 flex flex-col p-4 shrink-0 overflow-y-auto custom-scrollbar">
+           <h2 className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-4 mb-4">作業模式</h2>
+           <nav className="space-y-1 mb-8">
+             <NavBtn active={tab === 'normal'} icon={<User size={18}/>} label="一般模式" onClick={()=> setTab('normal')} />
+             <NavBtn active={tab === 'self'} icon={<HomeIcon size={18}/>} label="自孩模式" onClick={()=> setTab('self')} />
+             <NavBtn active={tab === 'joint'} icon={<Users size={18}/>} label="聯合托育" onClick={()=> setTab('joint')} />
+             <NavBtn active={tab === 'list'} icon={<TableIcon size={18}/>} label="收托組合表" onClick={()=> setTab('list')} />
+           </nav>
+
+           {/* 自孩條件設定 (僅在自孩模式顯示於左側) */}
+           {tab === 'self' && (
+             <div className="mt-auto pt-8 border-t-2 border-slate-100 flex flex-col gap-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="px-3">
+                  <h3 className="text-xl font-black text-[#E34B87] uppercase tracking-widest mb-3 flex items-center gap-3">
+                    <Star size={24} fill="currentColor"/> 自孩條件設定
+                  </h3>
+                  <p className="text-sm font-bold text-slate-500 leading-relaxed mb-4">
+                    ※ 未滿2歲、2-3歲家外送托視作夜間；2-3歲未家外送托視作全日
+                  </p>
+                </div>
+                <div className="flex flex-col gap-3">
+                  <SidebarSelfInput label="未滿2歲" value={selfProfileCounts[0]} onChange={(v)=>updateSelfProfile(0, v)} />
+                  <SidebarSelfInput label="2-3歲家外送托" value={selfProfileCounts[1]} onChange={(v)=>updateSelfProfile(1, v)} />
+                  <SidebarSelfInput label="2-3歲未家外送托" value={selfProfileCounts[2]} onChange={(v)=>updateSelfProfile(2, v)} />
+                </div>
+             </div>
+           )}
+        </aside>
+
+        {/* 中間面板 */}
+        <main className={`flex-1 p-8 flex flex-col overflow-hidden ${tab === 'list' ? 'bg-white' : ''}`}>
+           {tab === 'list' ? <ExhaustiveTable /> : (
+             <div className="max-w-5xl mx-auto w-full h-full flex flex-col space-y-6">
+                <div className="flex-1 relative overflow-hidden">
+                  <div className={`h-full overflow-y-auto pr-2 custom-scrollbar transition-all duration-500 ${isSelfFrozen ? 'opacity-10 grayscale-[50%] blur-[2px] pointer-events-none' : 'opacity-100'}`}>
+                    <div className="space-y-12 py-4">
+                      <InputGroup title="日間托育" color="bg-amber-100 text-amber-700">
+                        {[0, 1].map(i => <InputTile key={i} cat={CATEGORIES[i]} value={currentCounts[i]} min={curMins[i]} onChange={(v)=>update(i, v)} />)}
+                      </InputGroup>
+
+                      <InputGroup title="夜間托育" color="bg-indigo-100 text-indigo-700">
+                        {[2, 3].map(i => <InputTile key={i} cat={CATEGORIES[i]} value={currentCounts[i]} min={curMins[i]} onChange={(v)=>update(i, v)} />)}
+                      </InputGroup>
+
+                      <InputGroup title="全日托育" color="bg-blue-100 text-blue-700">
+                        {[4, 5].map(i => <InputTile key={i} cat={CATEGORIES[i]} value={currentCounts[i]} min={curMins[i]} onChange={(v)=>update(i, v)} />)}
+                      </InputGroup>
+                    </div>
+                  </div>
+
+                  {isSelfFrozen && (
+                    <div className="absolute inset-0 z-50 flex items-center justify-center p-8 bg-slate-900/5 backdrop-blur-[2px]">
+                      <div className="bg-white px-12 py-12 rounded-[48px] border-4 border-[#E34B87] shadow-[0_40px_80px_-15px_rgba(227,75,135,0.3)] scale-110 flex flex-col items-center gap-8 animate-in zoom-in slide-in-from-top-8 duration-500">
+                        <div className="w-24 h-24 bg-[#E34B87] rounded-full flex items-center justify-center shadow-xl shadow-[#E34B87]/30">
+                          <AlertTriangle className="text-white" size={48}/>
+                        </div>
+                        <div className="text-center space-y-3">
+                          <p className="text-4xl font-black text-slate-900 tracking-tight">啟用計算機</p>
+                          <p className="text-xl font-bold text-slate-500">請先於左側增加「自孩條件」</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+             </div>
+           )}
+        </main>
+
+        {/* 右側監控 (列表模式不顯示) */}
+        {tab !== 'list' && (
+          <aside className="w-[400px] bg-white border-l border-slate-200 flex flex-col h-full shrink-0 shadow-[-10px_0_30px_rgba(30,41,59,0.02)]">
+            <div className={`h-[18%] flex flex-col items-center justify-center border-b border-slate-100 transition-colors shrink-0 ${
+              stats.isValid ? 'bg-emerald-50' : 'bg-rose-50'
+            }`}>
+                <div className={`mb-1 ${stats.isValid ? 'text-emerald-500' : 'text-rose-500'}`}>
+                  {stats.isValid ? <CheckCircle2 size={40} /> : <AlertTriangle size={40} className="animate-pulse" />}
+                </div>
+                <div className={`text-4xl font-black tracking-tighter ${stats.isValid ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {stats.isValid ? '符合規範' : '超收！'}
+                </div>
+            </div>
+
+            <div className="flex-1 p-6 flex flex-col gap-4 overflow-hidden">
+              <div className="bg-slate-50 p-4 rounded-[28px] border border-slate-100 flex items-center justify-between shrink-0">
+                <div className="space-y-0">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">目前收托人數</p>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-5xl font-black italic text-[#1E293B]">{stats.totalInput}</span>
+                    <span className="text-lg font-bold text-slate-400">位</span>
+                  </div>
+                </div>
+                <div className="flex gap-1.5 h-12 w-20 items-end">
+                  {[1,2,3,4].map(v => (
+                    <div key={v} className={`flex-1 rounded-t-lg transition-all duration-300 ${
+                      v <= stats.totalInput ? 'bg-[#E34B87] h-full shadow-[0_-5px_10px_rgba(227,75,135,0.15)]' : 'bg-slate-200 h-2'
+                    }`} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex-1 flex flex-col overflow-hidden text-center">
+                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">仍可收托建議</h4>
+                 <div className="flex-1 bg-slate-50 p-4 rounded-[32px] border border-slate-100 overflow-y-auto relative flex flex-col custom-scrollbar">
+                    {stats.isValid && stats.suggestions.length > 0 ? (
+                      <div className="grid grid-cols-1 gap-2">
+                        {stats.suggestions.map((s, idx) => (
+                          <div key={idx} className="flex justify-between items-center bg-white border border-slate-200 p-2.5 rounded-2xl shadow-sm hover:border-[#E34B87]/40 hover:shadow-md transition-all group scale-100 active:scale-95">
+                              <div className="flex items-center gap-3">
+                                <div className="p-1.5 bg-slate-50 rounded-xl group-hover:scale-110 transition-transform">
+                                  {CATEGORIES[s.catIdx].icon}
+                                </div>
+                                <span className="text-sm font-black text-slate-700 text-left leading-tight">{s.name}</span>
+                              </div>
+                              <span className="bg-[#E34B87] text-white px-3 py-1.5 rounded-xl text-xs font-black shrink-0 shadow-[0_4px_10px_rgba(227,75,135,0.15)]">+{s.extra} 位</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center p-2">
+                        {stats.totalInput > 0 && stats.isValid ? (
+                          <div className="bg-amber-100 text-amber-700 px-6 py-5 rounded-[32px] border-2 border-amber-200 shadow-xl flex flex-col items-center gap-2 animate-bounce">
+                             <Star size={32} fill="currentColor"/>
+                             <span className="text-lg font-black whitespace-nowrap tracking-tight">✨ 人數已達上限</span>
+                          </div>
+                        ) : (
+                          <p className="text-sm font-bold text-slate-300 italic">尚無數據可用</p>
+                        )}
+                      </div>
+                    )}
+                 </div>
+              </div>
+            </div>
+          </aside>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function NavBtn({ active, icon, label, onClick }: any) {
+  return (
+    <button 
+      onClick={onClick}
+      className={`w-full flex items-center gap-3 px-6 py-4 rounded-2xl text-sm font-black transition-all ${
+        active ? 'bg-[#E34B87] text-white shadow-lg shadow-[#E34B87]/20' : 'text-slate-500 hover:bg-slate-100'
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
+}
+
+function InputTile({ cat, value, min, onChange }: any) {
+  return (
+    <div className={`bg-white border-2 rounded-[32px] p-6 flex flex-col justify-between transition-all shadow-sm ${
+      value > min ? 'border-[#E34B87]/20' : 'border-slate-50'
+    }`}>
+      <div className="flex items-center gap-4 mb-4">
+        <div className="p-3 rounded-2xl bg-slate-50">
+          {cat.icon}
+        </div>
+        <div className="flex flex-col">
+          <span className="text-base font-black text-slate-800">{cat.name}</span>
+          {min > 0 && <span className="text-[10px] font-bold text-[#E34B87]">自孩連動中 (+{min})</span>}
+        </div>
+      </div>
+      <div className="flex items-center justify-between bg-slate-50 p-2 rounded-2xl">
+         <button disabled={value <= min} onClick={() => onChange(value - 1)} className={`w-12 h-12 flex items-center justify-center rounded-xl transition-all ${value <= min ? 'text-slate-300 bg-transparent' : 'bg-white shadow-sm text-slate-600 hover:bg-white'}`}>
+           <Minus size={20}/>
+         </button>
+         <div className={`text-4xl font-black tracking-tighter ${value > min ? 'text-[#E34B87]' : 'text-slate-800'}`}>
+            {value}
+         </div>
+         <button onClick={() => onChange(value + 1)} className="w-12 h-12 flex items-center justify-center bg-white shadow-sm text-slate-600 hover:bg-white rounded-xl transition-all">
+           <Plus size={20}/>
+         </button>
+      </div>
+    </div>
+  );
+}
+
+function SidebarSelfInput({ label, value, onChange }: any) {
+  return (
+    <div className="bg-slate-50 p-4 rounded-2xl flex flex-col gap-3 border border-slate-100 hover:border-[#E34B87]/40 hover:bg-white transition-all group shadow-sm">
+      <span className="text-base font-black text-slate-700 leading-tight">{label}</span>
+      <div className="flex items-center justify-between bg-white px-3 py-2 rounded-2xl shadow-inner border border-slate-200">
+        <button onClick={()=>onChange(value-1)} className={`p-1.5 rounded-lg transition-all ${value<=0?'text-slate-200':'text-[#E34B87] hover:bg-[#E34B87]/10'}`}><Minus size={20}/></button>
+        <span className="text-3xl font-black text-slate-900 w-10 text-center tabular-nums">{value}</span>
+        <button onClick={()=>onChange(value+1)} className={`p-1.5 rounded-lg transition-all ${value>=2?'text-slate-200':'text-[#E34B87] hover:bg-[#E34B87]/10'}`}><Plus size={20}/></button>
+      </div>
+    </div>
+  );
+}
+
+function SelfInput({ label, value, onChange }: any) {
+  return (
+    <div className="bg-slate-50 p-2.5 rounded-2xl flex flex-col items-center border border-slate-100">
+      <span className="text-xs font-black text-slate-500 mb-1">{label}</span>
+      <div className="flex items-center gap-6">
+        <button onClick={()=>onChange(value-1)} className={`p-1 rounded-md transition-all ${value<=0?'text-slate-300':'text-[#E34B87] hover:bg-white'}`}><Minus size={18}/></button>
+        <span className="text-3xl font-black text-slate-800 w-8 text-center tabular-nums">{value}</span>
+        <button onClick={()=>onChange(value+1)} className={`p-1 rounded-md transition-all ${value>=2?'text-slate-300':'text-[#E34B87] hover:bg-white'}`}><Plus size={18}/></button>
+      </div>
+    </div>
+  );
+}
+
+function InputGroup({ title, color, children }: any) {
+  return (
+    <div className="relative pt-10 mt-4">
+      <div className={`absolute -top-3 left-6 px-6 py-1.5 rounded-2xl text-xl font-black uppercase tracking-widest shadow-lg z-10 border-2 border-white ${color}`}>
+        {title}
+      </div>
+      <div className="grid grid-cols-2 gap-6">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ExhaustiveTable() {
+  const [sortKey, setSortKey] = useState<number | 'total' | 'id' | 'status'>('id');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [filterTotal, setFilterTotal] = useState<number | null>(null);
+
+  const lists = useMemo(() => {
+    const findMaximal = (val: number[], list: number[][]) => {
+      const currentSum = val.reduce((a, b) => a + b, 0);
+      if (currentSum === 4) return true;
+      return !list.some(other => 
+        val.every((v, i) => v <= other[i]) && other.reduce((a, b) => a + b, 0) > currentSum
+      );
+    };
+
+    let generalRows = LEGAL_LIST.map((val, idx) => ({ 
+      id: idx + 1, 
+      val, 
+      total: val.reduce((a,b)=>a+b, 0),
+      isFull: findMaximal(val, LEGAL_LIST),
+      category: '一般收托',
+      desc: '',
+      statusText: findMaximal(val, LEGAL_LIST) ? '已達上限' : '可再收托'
+    }));
+
+    const exceptionDescs = [
+      "1位2-3歲自孩(家外送托) 視作夜間",
+      "1位2-3歲自孩(家外送托) 視作夜間",
+      "1位2-3歲自孩(未送外托) 視作全日",
+      "1位2-3歲自孩(未送外托) 視作全日"
+    ];
+
+    let selfRows = SELF_EXCEPTIONS.map((val, idx) => ({ 
+      id: 900 + idx + 1, 
+      val, 
+      total: val.reduce((a,b)=>a+b, 0),
+      isFull: true,
+      category: '自孩例外',
+      desc: exceptionDescs[idx],
+      statusText: '符合例外規範'
+    }));
+
+    let rows = [...generalRows, ...selfRows];
+    if (filterTotal !== null) rows = rows.filter(r => r.total === filterTotal);
+    
+    rows.sort((a, b) => {
+      let vA: any, vB: any;
+      if (sortKey === 'id') { vA = a.id; vB = b.id; }
+      else if (sortKey === 'total') { vA = a.total; vB = b.total; }
+      else if (sortKey === 'status') { vA = a.statusText; vB = b.statusText; }
+      else { vA = a.val[sortKey]; vB = b.val[sortKey]; }
+      
+      if (vA === vB) return 0;
+      return sortDir === 'asc' ? (vA > vB ? 1 : -1) : (vA < vB ? 1 : -1);
+    });
+    return rows;
+  }, [sortKey, sortDir, filterTotal]);
+
+  const toggleSort = (k: any) => {
+    if (sortKey === k) setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    else { setSortKey(k); setSortDir('desc'); }
+  };
+
+  return (
+    <div className="h-full flex flex-col space-y-6 overflow-hidden">
+       <div className="flex items-center justify-between shrink-0">
+          <div className="space-y-2">
+            <h2 className="text-4xl font-black text-slate-900 tracking-tight">收托組合表</h2>
+            <div className="flex flex-col gap-1.5">
+              <p className="text-base font-bold text-slate-400 flex items-center gap-3">
+                <span className="text-[#E34B87]">一般收托清單全紀錄</span>
+                <span className="w-2 h-2 bg-slate-300 rounded-full"/>
+                <span className="text-[#E34B87]">自孩例外</span>
+              </p>
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-bold text-slate-500 leading-relaxed">
+                  ※ 自孩例外組合為有「一位2-3歲自孩家外送托（視作夜間托育）」或「一位2-3歲自孩未家外送托（視作全日托育）」的情境
+                </p>
+                <p className="text-sm font-bold text-slate-500 leading-relaxed">
+                  ※ 點選表格標題欄位可進行「排序」功能
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-col gap-3 items-end">
+            <div className="bg-slate-100 p-3 rounded-[32px] border border-slate-200 shadow-inner flex flex-col gap-2 items-center">
+               <span className="text-xs font-black text-slate-500 uppercase tracking-widest px-4 border-b border-slate-200 pb-1 w-full text-center">總人數篩選器</span>
+               <div className="flex gap-2">
+                 {[1,2,3,4].map(n => (
+                   <button key={n} onClick={()=>setFilterTotal(filterTotal === n ? null : n)} className={`w-12 h-12 rounded-2xl text-lg font-black transition-all ${filterTotal === n ? 'bg-[#E34B87] text-white shadow-lg' : 'hover:bg-white text-slate-500'}`}>{n}</button>
+                 ))}
+               </div>
+            </div>
+          </div>
+        </div>
+       <div className="flex-1 overflow-auto rounded-[48px] border-[3px] border-slate-200 shadow-2xl bg-white custom-scrollbar">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
+             <thead className="sticky top-0 z-20">
+               <tr className="bg-slate-100 text-sm font-black text-slate-500 uppercase tracking-widest border-b border-slate-200">
+                 <th rowSpan={2} className="p-6 pl-12 border-r border-slate-200 cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('id')}>
+                    <div className="flex items-center gap-2">
+                       編號 <ArrowUpDown size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                 </th>
+                 <th colSpan={2} className="p-5 text-center border-r border-slate-200 text-amber-700 bg-amber-50/70 text-xl font-black">日間托育</th>
+                 <th colSpan={2} className="p-5 text-center border-r border-slate-200 text-indigo-700 bg-indigo-50/70 text-xl font-black">夜間托育</th>
+                 <th colSpan={2} className="p-5 text-center border-r border-slate-200 text-blue-700 bg-blue-50/70 text-xl font-black">全日托育</th>
+                 <th rowSpan={2} className="p-6 text-center border-r border-slate-200 w-44 text-xl cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('total')}>
+                    <div className="flex items-center justify-center gap-2">
+                      總人數 <ArrowUpDown size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                 </th>
+                 <th rowSpan={2} className="p-6 pr-12 text-center text-xl cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('status')}>
+                    <div className="flex items-center justify-center gap-2">
+                       收托狀態說明 <ArrowUpDown size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                 </th>
+               </tr>
+               <tr className="bg-slate-50 text-slate-400 text-xs font-black tracking-widest border-b-2 border-slate-200">
+                 <th className="p-5 text-center border-r border-slate-100 cursor-pointer hover:text-[#E34B87] text-sm" onClick={()=>toggleSort(0)}>未滿2歲</th>
+                 <th className="p-5 text-center border-r border-slate-200 cursor-pointer hover:text-[#E34B87] text-sm" onClick={()=>toggleSort(1)}>2歲以上</th>
+                 <th className="p-5 text-center border-r border-slate-100 cursor-pointer hover:text-[#E34B87] text-sm" onClick={()=>toggleSort(2)}>未滿2歲</th>
+                 <th className="p-5 text-center border-r border-slate-200 cursor-pointer hover:text-[#E34B87] text-sm" onClick={()=>toggleSort(3)}>2歲以上</th>
+                 <th className="p-5 text-center border-r border-slate-100 cursor-pointer hover:text-[#E34B87] text-sm" onClick={()=>toggleSort(4)}>未滿2歲</th>
+                 <th className="p-5 text-center border-r border-slate-200 cursor-pointer hover:text-[#E34B87] text-sm" onClick={()=>toggleSort(5)}>2歲以上</th>
+               </tr>
+             </thead>
+             <tbody className="text-xl">
+               {lists.map((row, idx) => (
+                 <tr key={row.id} className={`border-b border-slate-100 hover:bg-[#E34B87]/5 transition-colors group ${
+                   row.category === '自孩例外' ? 'bg-[#E34B87]/5' : (idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/20')
+                 }`}>
+                   <td className="p-6 pl-12 text-slate-300 font-bold tabular-nums">
+                     <div className="flex flex-col gap-1">
+                       <span>#{String(row.id > 900 ? row.id - 900 : row.id).padStart(2, '0')}</span>
+                       {row.category === '自孩例外' && <span className="text-[10px] bg-[#E34B87] text-white px-2 py-0.5 rounded-lg italic shrink-0 text-center font-black">自孩例外</span>}
+                     </div>
+                   </td>
+                   {row.val.map((v, i) => (
+                     <td key={i} className={`p-6 text-center font-black transition-all text-2xl tabular-nums ${v > 0 ? 'text-[#E34B87] scale-110 drop-shadow-sm' : 'text-slate-100'}`}>{v}</td>
+                   ))}
+                   <td className={`p-6 text-center font-black tabular-nums border-l border-r border-slate-100 text-4xl ${row.isFull ? 'text-slate-900 bg-slate-100/50' : 'text-emerald-500 bg-emerald-50/10'}`}>
+                     {row.total}
+                   </td>
+                   <td className="p-6 pr-12 text-center min-w-[200px]">
+                      {row.category === '自孩例外' ? (
+                        <div className="flex flex-col items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1.5 px-6 py-2.5 bg-[#E34B87] text-white rounded-full text-xs font-black shadow-lg shadow-[#E34B87]/20 transition-transform active:scale-95">
+                            <CheckCircle2 size={12}/> 符合例外規範
+                          </span>
+                        </div>
+                      ) : row.isFull ? (
+                        <span className="inline-flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-full text-xs font-black shadow-lg shadow-slate-300">
+                          <Star size={12} fill="currentColor"/> 已達上限
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-100 text-emerald-700 rounded-full text-xs font-black border-2 border-emerald-200">
+                          <Plus size={12}/> 可再收托
+                        </span>
+                      )}
+                   </td>
+                 </tr>
+               ))}
+               {lists.length === 0 && (
+                 <tr>
+                    <td colSpan={10} className="p-32 text-center text-slate-300 font-bold italic text-2xl tracking-widest">目前篩選條件下查無組合</td>
+                 </tr>
+               )}
+             </tbody>
+          </table>
+       </div>
+    </div>
+  );
+}
+
+const LEGAL_LIST_DATA = LEGAL_LIST; // 為保持向下相容性或特定邏輯命名
