@@ -204,6 +204,16 @@ export default function App() {
   return (
     <div className="h-screen w-screen bg-[#F8FAFC] flex flex-col text-[#1E293B] overflow-hidden font-sans">
       
+      <style>{`
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+        .animate-blink {
+          animation: blink 1s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+      `}</style>
+      
       <header className="lg:h-16 h-14 bg-white lg:px-8 px-4 flex items-center justify-between border-b border-slate-200 shrink-0">
         <div className="flex items-center gap-4">
           <Calculator className="text-[#E34B87] lg:w-6 lg:h-6 w-5 h-5" />
@@ -232,7 +242,7 @@ export default function App() {
            {tab === 'self' && (
              <div className="mt-auto pt-8 border-t-2 border-slate-100 flex flex-col gap-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <div className="px-3">
-                  <h3 className="text-xl font-black text-[#E34B87] uppercase tracking-widest mb-3 flex items-center gap-3">
+                  <h3 className={`text-xl font-black text-[#E34B87] uppercase tracking-widest mb-3 flex items-center gap-3 ${isSelfFrozen ? 'animate-blink' : ''}`}>
                     <Star size={24} fill="currentColor"/> 自孩條件設定
                   </h3>
                   <p className="text-sm font-bold text-slate-500 leading-relaxed mb-4">
@@ -258,7 +268,7 @@ export default function App() {
                   {tab === 'self' && (
                     <div className="bg-white border-2 border-[#E34B87] rounded-3xl p-3 shadow-xl mb-2">
                       <div className="flex items-center justify-between mb-2 px-1">
-                        <h3 className="text-sm font-black text-[#E34B87] flex items-center gap-2">
+                        <h3 className={`text-sm font-black text-[#E34B87] flex items-center gap-2 ${isSelfFrozen ? 'animate-blink' : ''}`}>
                           <Star size={16} fill="currentColor"/> 自孩條件設定
                         </h3>
                         <span className="text-[9px] font-bold text-slate-400 italic">※ 連動收托最小值</span>
@@ -282,7 +292,11 @@ export default function App() {
                               <InputTile cat={CATEGORIES[1]} labelOverride="收托名額" value={currentCounts[1]} min={0} onChange={(v)=>update(1, v)} />
                            </InputGroup>
                            <div className="grid grid-cols-1 lg:grid-cols-2 lg:gap-12 gap-8">
-                              <InputGroup title="夜間托育" color="bg-indigo-100 text-indigo-700" fullWidth>
+                              <InputGroup 
+                                title="夜間托育" 
+                                color="bg-indigo-100 text-indigo-700" 
+                                fullWidth
+                              >
                                  <InputTile cat={CATEGORIES[3]} labelOverride="收托名額" value={currentCounts[3]} min={0} onChange={(v)=>update(3, v)} />
                               </InputGroup>
                               <InputGroup title="全日托育" color="bg-blue-100 text-blue-700" fullWidth>
@@ -296,7 +310,11 @@ export default function App() {
                             {[0, 1].map(i => <InputTile key={i} cat={CATEGORIES[i]} value={currentCounts[i]} min={curMins[i]} onChange={(v)=>update(i, v)} />)}
                           </InputGroup>
 
-                          <InputGroup title="夜間托育" color="bg-indigo-100 text-indigo-700">
+                          <InputGroup 
+                            title="夜間托育" 
+                            color="bg-indigo-100 text-indigo-700"
+                            notice={tab === 'self' ? "※ 未滿2歲自孩依有無家外送托分成全日或夜間，但是人數計算上都是套用夜間托育的算法" : undefined}
+                          >
                             {[2, 3].map(i => <InputTile key={i} cat={CATEGORIES[i]} value={currentCounts[i]} min={curMins[i]} onChange={(v)=>update(i, v)} />)}
                           </InputGroup>
 
@@ -553,11 +571,18 @@ function SelfInput({ label, value, onChange }: any) {
   );
 }
 
-function InputGroup({ title, color, children, className, fullWidth }: any) {
+function InputGroup({ title, color, children, className, fullWidth, notice }: any) {
   return (
     <div className={`relative lg:pt-10 pt-8 mt-2 ${className || ''}`}>
-      <div className={`absolute -top-3 lg:left-6 left-2 lg:px-6 px-4 py-1.5 rounded-2xl lg:text-xl text-base font-black uppercase tracking-widest shadow-lg z-10 border-2 border-white ${color}`}>
-        {title}
+      <div className="absolute -top-3 lg:left-6 left-2 z-10 flex items-center lg:gap-4 gap-2 w-full pr-4">
+        <div className={`shrink-0 lg:px-6 px-4 py-1.5 rounded-2xl lg:text-xl text-base font-black uppercase tracking-widest shadow-lg border-2 border-white ${color}`}>
+          {title}
+        </div>
+        {notice && (
+          <span className="text-[9px] lg:text-[11px] font-bold text-slate-400 italic leading-tight pt-1 max-w-[50%] lg:max-w-none">
+            {notice}
+          </span>
+        )}
       </div>
       <div className={`grid grid-cols-1 ${fullWidth ? '' : 'md:grid-cols-2'} lg:gap-6 gap-4`}>
         {children}
