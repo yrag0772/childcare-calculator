@@ -1,8 +1,9 @@
+# 這是自動部署腳本，當您將程式碼同步到 GitHub 時，它會自動幫您發布網頁。
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main"] # 如果您的主要分支名稱不是 main，請修改這裡
 
 permissions:
   contents: read
@@ -22,10 +23,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
       - name: Install dependencies
-        run: npm install
+        run: npm ci
       - name: Build
         run: npm run build
       - name: Upload artifact
