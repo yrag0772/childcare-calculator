@@ -256,14 +256,17 @@ export default function App() {
                 {/* 手機版專屬：自孩設定區 (固定在最上方) */}
                 <div className="lg:hidden shrink-0 z-[60]">
                   {tab === 'self' && (
-                    <div className="bg-white border-2 border-[#E34B87] rounded-3xl p-4 shadow-xl mb-2">
-                      <h3 className="text-lg font-black text-[#E34B87] flex items-center gap-2 mb-2">
-                        <Star size={20} fill="currentColor"/> 自孩條件設定
-                      </h3>
-                      <div className="grid grid-cols-1 gap-2">
-                        <SidebarSelfInput label="未滿2歲" value={selfProfileCounts[0]} onChange={(v)=>updateSelfProfile(0, v)} />
-                        <SidebarSelfInput label="2-3歲家外送托" value={selfProfileCounts[1]} onChange={(v)=>updateSelfProfile(1, v)} />
-                        <SidebarSelfInput label="2-3歲未家外送托" value={selfProfileCounts[2]} onChange={(v)=>updateSelfProfile(2, v)} />
+                    <div className="bg-white border-2 border-[#E34B87] rounded-3xl p-3 shadow-xl mb-2">
+                      <div className="flex items-center justify-between mb-2 px-1">
+                        <h3 className="text-sm font-black text-[#E34B87] flex items-center gap-2">
+                          <Star size={16} fill="currentColor"/> 自孩條件設定
+                        </h3>
+                        <span className="text-[9px] font-bold text-slate-400 italic">※ 連動收托最小值</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <CompactSelfInput label="未滿2歲" value={selfProfileCounts[0]} onChange={(v)=>updateSelfProfile(0, v)} />
+                        <CompactSelfInput label="2-3歲送托" value={selfProfileCounts[1]} onChange={(v)=>updateSelfProfile(1, v)} />
+                        <CompactSelfInput label="2-3歲未送托" value={selfProfileCounts[2]} onChange={(v)=>updateSelfProfile(2, v)} />
                       </div>
                     </div>
                   )}
@@ -313,7 +316,8 @@ export default function App() {
                         </div>
                         <div className="text-center space-y-2 lg:space-y-3">
                           <p className="text-xl lg:text-4xl font-black text-slate-900 tracking-tight">啟用計算機</p>
-                          <p className="text-sm lg:text-xl font-bold text-slate-500">請先於上方增加「自孩條件」</p>
+                          <p className="text-sm lg:hidden font-bold text-slate-500">請先於上方增加「自孩條件」</p>
+                          <p className="text-xl hidden lg:block font-bold text-slate-500">請先於左側增加「自孩條件」</p>
                         </div>
                       </div>
                     </div>
@@ -402,23 +406,35 @@ export default function App() {
                 </div>
                 <div className="flex flex-col">
                   <span className={`text-lg font-black ${stats.isValid ? 'text-emerald-700' : 'text-rose-700'}`}>
-                    {stats.isValid ? '符合規範' : '超收警告！'}
+                    {stats.isValid ? '符合規範' : '超收！'}
                   </span>
                   <span className="text-[10px] font-bold text-slate-400">目前收托：{stats.totalInput} 位</span>
                 </div>
               </div>
               
-              {/* 快速查看建議按鈕 (可滾動到頂部查看，或點擊彈出) */}
-              {stats.isValid && stats.suggestions.length > 0 && (
-                <div className="flex -space-x-2">
-                  {stats.suggestions.slice(0, 3).map((s, i) => (
-                    <div key={i} className="w-8 h-8 rounded-full bg-white border-2 border-emerald-100 flex items-center justify-center text-[#E34B87] shadow-sm">
-                      {React.cloneElement(CATEGORIES[s.catIdx].icon as React.ReactElement, { size: 14 })}
-                    </div>
-                  ))}
-                  {stats.suggestions.length > 3 && (
-                    <div className="w-8 h-8 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center text-white text-[10px] font-black">
-                      +{stats.suggestions.length - 3}
+              {/* 快速查看建議按鈕 */}
+              {stats.isValid && (
+                <div className="flex flex-col items-end gap-1">
+                  {stats.suggestions.length > 0 ? (
+                    <>
+                      <span className="text-[9px] font-black text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full shadow-sm">仍可收托</span>
+                      <div className="flex -space-x-2">
+                        {stats.suggestions.slice(0, 3).map((s, i) => (
+                          <div key={i} className="w-8 h-8 rounded-full bg-white border-2 border-emerald-100 flex items-center justify-center text-[#E34B87] shadow-sm">
+                            {React.cloneElement(CATEGORIES[s.catIdx].icon as React.ReactElement, { size: 14 })}
+                          </div>
+                        ))}
+                        {stats.suggestions.length > 3 && (
+                          <div className="w-8 h-8 rounded-full bg-emerald-500 border-2 border-white flex items-center justify-center text-white text-[10px] font-black">
+                            +{stats.suggestions.length - 3}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : stats.totalInput > 0 && (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full border border-amber-200">
+                      <Star size={12} fill="currentColor"/>
+                      <span className="text-[11px] font-black whitespace-nowrap">人數已達上限</span>
                     </div>
                   )}
                 </div>
@@ -493,6 +509,19 @@ function InputTile({ cat, value, min, onChange, labelOverride }: any) {
          <button onClick={() => onChange(value + 1)} className="lg:w-12 lg:h-12 w-10 h-10 flex items-center justify-center bg-white shadow-sm text-slate-600 hover:bg-white rounded-xl transition-all">
            <Plus size={18}/>
          </button>
+      </div>
+    </div>
+  );
+}
+
+function CompactSelfInput({ label, value, onChange }: any) {
+  return (
+    <div className="bg-slate-50 p-2 rounded-2xl flex flex-col items-center gap-1 border border-slate-100">
+      <span className="text-[10px] font-black text-slate-500 text-center leading-tight whitespace-nowrap">{label}</span>
+      <div className="flex items-center justify-between bg-white w-full px-1 py-1 rounded-xl border border-slate-200 shadow-sm">
+        <button onClick={()=>onChange(value-1)} className={`p-0.5 rounded transition-all ${value<=0?'text-slate-200':'text-[#E34B87]'}`}><Minus size={14}/></button>
+        <span className="text-base font-black text-slate-900 tabular-nums">{value}</span>
+        <button onClick={()=>onChange(value+1)} className={`p-0.5 rounded transition-all ${value>=2?'text-slate-200':'text-[#E34B87]'}`}><Plus size={14}/></button>
       </div>
     </div>
   );
@@ -672,26 +701,26 @@ function ExhaustiveTable() {
           <table className="w-full text-left border-collapse min-w-[320px] lg:min-w-[1100px]">
              <thead className="sticky top-0 z-20">
                <tr className="bg-slate-100 text-[10px] lg:text-sm font-black text-slate-500 uppercase tracking-widest border-b border-slate-200">
-                 <th rowSpan={2} className="lg:p-6 p-3 lg:pl-12 pl-4 border-r border-slate-200 cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('id')}>
+                 <th rowSpan={listType === 'general' ? 2 : 1} className="lg:p-6 p-3 lg:pl-12 pl-4 border-r border-slate-200 cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('id')}>
                     <div className="flex items-center gap-2">
                        編號 <ArrowUpDown size={12} className="lg:w-3.5 lg:h-3.5" />
                     </div>
                  </th>
-                 <th colSpan={listType === 'general' ? 2 : 1} className="lg:p-5 p-2 text-center border-r border-slate-200 text-amber-700 bg-amber-50/70 lg:text-xl text-[10px] font-black">日間</th>
-                 <th colSpan={listType === 'general' ? 2 : 1} className="lg:p-5 p-2 text-center border-r border-slate-200 text-indigo-700 bg-indigo-50/70 lg:text-xl text-[10px] font-black">夜間</th>
-                 <th colSpan={listType === 'general' ? 2 : 1} className="lg:p-5 p-2 text-center border-r border-slate-200 text-blue-700 bg-blue-50/70 lg:text-xl text-[10px] font-black">全日</th>
-                 <th rowSpan={2} className="lg:p-6 p-2 text-center border-r border-slate-200 lg:w-44 w-12 lg:text-xl text-[10px] cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('total')}>
+                 <th colSpan={listType === 'general' ? 2 : 1} className={`lg:p-5 p-2 text-center border-r border-slate-200 text-amber-700 bg-amber-50/70 lg:text-xl text-[10px] font-black ${listType === 'joint' ? 'cursor-pointer hover:bg-amber-100/80 transition-colors' : ''}`} onClick={listType === 'joint' ? ()=>toggleSort(1) : undefined}>日間</th>
+                 <th colSpan={listType === 'general' ? 2 : 1} className={`lg:p-5 p-2 text-center border-r border-slate-200 text-indigo-700 bg-indigo-50/70 lg:text-xl text-[10px] font-black ${listType === 'joint' ? 'cursor-pointer hover:bg-indigo-100/80 transition-colors' : ''}`} onClick={listType === 'joint' ? ()=>toggleSort(3) : undefined}>夜間</th>
+                 <th colSpan={listType === 'general' ? 2 : 1} className={`lg:p-5 p-2 text-center border-r border-slate-200 text-blue-700 bg-blue-50/70 lg:text-xl text-[10px] font-black ${listType === 'joint' ? 'cursor-pointer hover:bg-blue-100/80 transition-colors' : ''}`} onClick={listType === 'joint' ? ()=>toggleSort(5) : undefined}>全日</th>
+                 <th rowSpan={listType === 'general' ? 2 : 1} className="lg:p-6 p-2 text-center border-r border-slate-200 lg:w-44 w-12 lg:text-xl text-[10px] cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('total')}>
                     <div className="flex items-center justify-center gap-1">
                        <span className="hidden lg:inline">總人數</span><span className="lg:hidden text-center">總<br/>人</span> <ArrowUpDown size={12} />
                     </div>
                  </th>
-                 <th rowSpan={2} className="lg:p-6 p-2 lg:pr-12 pr-4 text-center lg:text-xl text-[10px] cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('status')}>
+                 <th rowSpan={listType === 'general' ? 2 : 1} className="lg:p-6 p-2 lg:pr-12 pr-4 text-center lg:text-xl text-[10px] cursor-pointer hover:bg-slate-200 group" onClick={()=>toggleSort('status')}>
                     <div className="flex items-center justify-center gap-1">
                        <span className="hidden lg:inline">收托狀態說明</span><span className="lg:hidden">狀態</span> <ArrowUpDown size={12} />
                     </div>
                  </th>
                </tr>
-               {listType === 'general' ? (
+               {listType === 'general' && (
                  <tr className="bg-slate-50 text-slate-400 text-[8px] lg:text-xs font-black tracking-widest border-b-2 border-slate-200">
                    <th className="lg:p-5 p-2 text-center border-r border-slate-100 cursor-pointer hover:text-[#E34B87] lg:text-sm text-[8px]" onClick={()=>toggleSort(0)}>未滿2歲</th>
                    <th className="lg:p-5 p-2 text-center border-r border-slate-200 cursor-pointer hover:text-[#E34B87] lg:text-sm text-[8px]" onClick={()=>toggleSort(1)}>2歲以上</th>
@@ -699,12 +728,6 @@ function ExhaustiveTable() {
                    <th className="lg:p-5 p-2 text-center border-r border-slate-200 cursor-pointer hover:text-[#E34B87] lg:text-sm text-[8px]" onClick={()=>toggleSort(3)}>2歲以上</th>
                    <th className="lg:p-5 p-2 text-center border-r border-slate-100 cursor-pointer hover:text-[#E34B87] lg:text-sm text-[8px]" onClick={()=>toggleSort(4)}>未滿2歲</th>
                    <th className="lg:p-5 p-2 text-center border-r border-slate-200 cursor-pointer hover:text-[#E34B87] lg:text-sm text-[8px]" onClick={()=>toggleSort(5)}>2歲以上</th>
-                 </tr>
-               ) : (
-                 <tr className="bg-slate-50 text-slate-400 text-[8px] lg:text-xs font-black tracking-widest border-b-2 border-slate-200">
-                    <th className="lg:p-3 p-2 text-center border-r border-slate-200 font-bold lg:text-sm">收托額度</th>
-                    <th className="lg:p-3 p-2 text-center border-r border-slate-200 font-bold lg:text-sm">收托額度</th>
-                    <th className="lg:p-3 p-2 text-center border-r border-slate-200 font-bold lg:text-sm">收托額度</th>
                  </tr>
                )}
              </thead>
