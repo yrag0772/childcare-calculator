@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
+import { toJpeg } from 'html-to-image';
 import { 
   Calculator, 
   RotateCcw, 
@@ -13,13 +14,20 @@ import {
   AlertTriangle,
   User,
   Home as HomeIcon,
+  Baby,
   Users,
   Plus,
   Minus,
   Table as TableIcon,
   ArrowUpDown,
-  Star
+  Star,
+  Clock,
+  Camera,
+  X,
+  Info
 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { format, addMinutes, startOfDay, differenceInMinutes, isWithinInterval } from 'date-fns';
 
 // --- 合法組合窮舉數據 (順序: [未2日, 2上日, 未2夜, 2上夜, 未2全, 2上全]) ---
 const LEGAL_LIST = [
@@ -71,13 +79,32 @@ const CATEGORIES = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState<'normal' | 'self' | 'joint' | 'list'>('normal');
+  const [tab, setTab] = useState<'normal' | 'self' | 'joint' | 'list' | 'sim' | 'help'>('normal');
   
   // 獨立狀態管理：確保切換模式時數據不打架
   const [normalCounts, setNormalCounts] = useState([0, 0, 0, 0, 0, 0]);
   const [selfCareCounts, setSelfCareCounts] = useState([0, 0, 0, 0, 0, 0]);
   const [selfProfileCounts, setSelfProfileCounts] = useState([0, 0, 0]); // [未2, 2-3外, 2-3無]
   const [jointCounts, setJointCounts] = useState([0, 0, 0, 0, 0, 0]);
+
+  // 時段模擬器狀態
+  const [simEvents, setSimEvents] = useState<any[]>([]);
+  const simScreenshotRef = useRef<HTMLDivElement>(null);
+
+  const takeSimScreenshot = async () => {
+    if (!simScreenshotRef.current) return;
+    try {
+      const dataUrl = await toJpeg(simScreenshotRef.current, { quality: 1, backgroundColor: '#ffffff' });
+      const link = document.createElement('a');
+      const now = new Date();
+      const dateStr = format(now, 'yyyyMMddHHmmss');
+      link.download = `收托人數時段模擬_${dateStr}.jpg`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error('Screenshot failed:', err);
+    }
+  };
 
   // 根據當前模式選擇對應的數據集
   const currentCounts = tab === 'normal' ? normalCounts : tab === 'self' ? selfCareCounts : jointCounts;
@@ -199,6 +226,7 @@ export default function App() {
     setSelfCareCounts([0, 0, 0, 0, 0, 0]);
     setSelfProfileCounts([0, 0, 0]);
     setJointCounts([0, 0, 0, 0, 0, 0]);
+    setSimEvents([]);
   };
 
   return (
@@ -215,14 +243,26 @@ export default function App() {
       `}</style>
       
       <header className="lg:h-16 h-14 bg-white lg:px-8 px-4 flex items-center justify-between border-b border-slate-200 shrink-0">
-        <div className="flex items-center gap-4">
-          <Calculator className="text-[#E34B87] lg:w-6 lg:h-6 w-5 h-5" />
-          <h1 className="lg:text-xl text-lg font-black tracking-tight">收托人數計算機</h1>
+        <div className="flex items-center gap-2 lg:gap-4 shrink-0">
+          <Calculator className="text-[#E34B87] lg:w-6 lg:h-6 w-5 h-5 shrink-0" />
+          <h1 className="lg:text-xl text-base font-black tracking-tight whitespace-nowrap">收托人數計算機</h1>
         </div>
-        {tab !== 'list' && (
-          <button onClick={reset} className="flex items-center gap-2 bg-slate-100 px-5 py-1.5 rounded-xl text-xs font-bold hover:bg-slate-200 transition-all text-slate-600">
-             <RotateCcw size={14} /> 重置所有數據
-          </button>
+        {(tab !== 'list' && tab !== 'help') && (
+          <div className="flex gap-1.5 lg:gap-2 shrink-0">
+            {tab === 'sim' && (
+              <button 
+                onClick={takeSimScreenshot} 
+                className="flex items-center gap-1.5 lg:gap-2 bg-slate-900 px-3 lg:px-5 py-1.5 rounded-xl text-[10px] lg:text-xs font-bold hover:bg-slate-800 transition-all text-white shadow-lg active:scale-95 shrink-0"
+              >
+                <Camera size={12} className="lg:w-3.5 lg:h-3.5" /> 截圖
+              </button>
+            )}
+            <button onClick={reset} className="flex items-center gap-1.5 lg:gap-2 bg-slate-100 px-3 lg:px-5 py-1.5 rounded-xl text-[10px] lg:text-xs font-bold hover:bg-slate-200 transition-all text-slate-600 shrink-0">
+               <RotateCcw size={12} className="lg:w-3.5 lg:h-3.5" /> 
+               <span className="hidden xs:inline">重置所有數據</span>
+               <span className="xs:hidden">重置</span>
+            </button>
+          </div>
         )}
       </header>
 
@@ -235,7 +275,9 @@ export default function App() {
              <NavBtn active={tab === 'normal'} icon={<User size={18}/>} label="一般模式" onClick={()=> setTab('normal')} />
              <NavBtn active={tab === 'self'} icon={<HomeIcon size={18}/>} label="自孩模式" onClick={()=> setTab('self')} />
              <NavBtn active={tab === 'joint'} icon={<Users size={18}/>} label="聯合托育" onClick={()=> setTab('joint')} />
+             <NavBtn active={tab === 'sim'} icon={<Clock size={18}/>} label="時段模擬器" onClick={()=> setTab('sim')} />
              <NavBtn active={tab === 'list'} icon={<TableIcon size={18}/>} label="收托組合表" onClick={()=> setTab('list')} />
+             <NavBtn active={tab === 'help'} icon={<Info size={18}/>} label="系統說明" onClick={()=> setTab('help')} />
            </nav>
 
            {/* 自孩條件設定 (僅在自孩模式顯示於左側) */}
@@ -259,8 +301,8 @@ export default function App() {
         </aside>
 
         {/* 中間面板 */}
-        <main className={`flex-1 lg:p-8 p-4 flex flex-col overflow-hidden ${tab === 'list' ? 'bg-white' : ''}`}>
-           {tab === 'list' ? <ExhaustiveTable /> : (
+        <main className={`flex-1 lg:p-8 p-4 flex flex-col overflow-hidden ${['list', 'sim', 'help'].includes(tab) ? 'bg-white' : ''}`}>
+           {tab === 'list' ? <ExhaustiveTable /> : tab === 'sim' ? <ScheduleSimulator events={simEvents} setEvents={setSimEvents} screenshotRef={simScreenshotRef}/> : tab === 'help' ? <HelpContent /> : (
              <div className="max-w-5xl mx-auto w-full h-full flex flex-col lg:space-y-6 space-y-4 overflow-hidden relative">
                 
                 {/* 手機版專屬：自孩設定區 (固定在最上方) */}
@@ -346,11 +388,11 @@ export default function App() {
         </main>
 
         {/* 右側監控 (電腦版顯示) */}
-        {tab !== 'list' && (
+        {!['list', 'sim', 'help'].includes(tab) && (
           <aside className="w-[400px] bg-white border-l border-slate-200 lg:flex flex-col h-full shrink-0 shadow-[-10px_0_30px_rgba(30,41,59,0.02)] hidden">
             <div className={`h-[18%] flex flex-col items-center justify-center border-b border-slate-100 transition-colors shrink-0 ${
-              stats.isValid ? 'bg-emerald-50' : 'bg-rose-50'
-            }`}>
+                 stats.isValid ? 'bg-emerald-50' : 'bg-rose-50'
+               }`}>
                 <div className={`mb-1 ${stats.isValid ? 'text-emerald-500' : 'text-rose-500'}`}>
                   {stats.isValid ? <CheckCircle2 size={40} /> : <AlertTriangle size={40} className="animate-pulse" />}
                 </div>
@@ -413,7 +455,7 @@ export default function App() {
         )}
 
         {/* 手機版底部：狀態與總人數 Sticky Bar */}
-        {tab !== 'list' && (
+        {!['list', 'sim', 'help'].includes(tab) && (
           <div className="lg:hidden fixed bottom-[72px] left-0 right-0 z-40 px-4 pointer-events-none">
             <div className={`p-4 rounded-[32px] border-2 shadow-2xl flex items-center justify-between pointer-events-auto transition-colors ${
               stats.isValid ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'
@@ -466,8 +508,74 @@ export default function App() {
            <MobileNavBtn active={tab === 'normal'} icon={<User size={20}/>} label="一般" onClick={()=> setTab('normal')} />
            <MobileNavBtn active={tab === 'self'} icon={<HomeIcon size={20}/>} label="自孩" onClick={()=> setTab('self')} />
            <MobileNavBtn active={tab === 'joint'} icon={<Users size={20}/>} label="聯合" onClick={()=> setTab('joint')} />
-           <MobileNavBtn active={tab === 'list'} icon={<TableIcon size={20}/>} label="列表" onClick={()=> setTab('list')} />
+           <MobileNavBtn active={tab === 'sim'} icon={<Clock size={20}/>} label="模擬" onClick={()=> setTab('sim')} />
+           <MobileNavBtn active={tab === 'help'} icon={<Info size={20}/>} label="說明" onClick={()=> setTab('help')} />
         </nav>
+      </div>
+    </div>
+  );
+}
+
+function HelpContent() {
+  const sections = [
+    {
+      title: "系統使用說明",
+      items: [
+        "半日托育（課後托）以日間托育的類型來計算",
+        "時段模擬器無法處理兩個托兒同一天都有送托，但兩位時間交接，不重疊的認定問題（例如托兒1：08:00-16:00，托兒2：16:30-20:30），此類情境依各地方主管機就判定",
+        "本工具僅提供參考，確切判斷仍以主管機關為主",
+        "自孩模式請先設定自孩的條件"
+      ]
+    },
+    {
+      title: "一般托育規則",
+      items: [
+        "總共人數至多4名",
+        "未滿二歲至多2名",
+        "日間托育每人佔1人名額",
+        "全日托育每人佔2人名額",
+        "夜間托育原則上佔2人名額，但是當「收托2名夜間托育和1名日間托育」或是「收托2名夜間托育和2名日間托育」時，夜間托育中2歲以上者每人佔1人名額（例外規則）"
+      ]
+    },
+    {
+      title: "自孩規則",
+      items: [
+        "自孩滿三歲後就不算收托人數",
+        "有一位未滿二歲自孩，雖然有送托者視作夜間托育，無送托者視作全日托育，但是在人數計算上都是比照「有一名未滿二歲夜間托育」計算",
+        "有一名2-3歲的自孩，有家外送托者視作2歲以上夜間托育，無家外送托者視作2歲以上全日托育，此狀態的額度屬於例外，總額至多能收托一位全日、一位夜間2歲以上、一位日間（例外規則）",
+        "有二位未滿二歲自孩，比照有二名未滿二歲夜間托育計算（額滿）",
+        "有一位未滿二歲自孩加上一位2-3歲自孩沒有家外送托，比照有一名未滿二歲夜間托育加上二歲以上全日托育計算（額滿）",
+        "有一位未滿二歲自孩加上一位2-3歲自孩有送家外送托，比照有一名未滿二歲夜間托育加上二歲以上夜間托育（仍可收托一名日間托育）",
+        "有二名2-3歲自孩家外送托，比照兩名兩歲以上夜間托育計算（仍可收托兩名日間托育）",
+        "有二名2-3歲自孩沒有家外送托，比照兩名兩歲以上全日托育計算（額滿）"
+      ]
+    },
+    {
+      title: "聯合收托規則",
+      items: [
+        "總共人數至多四名",
+        "日間托育每人佔1人名額",
+        "全日托育和夜間托育每人佔1人名額，但是兩者加總起來至多2名"
+      ]
+    }
+  ];
+
+  return (
+    <div className="max-w-4xl mx-auto py-8 lg:px-8 px-4 h-full overflow-y-auto custom-scrollbar">
+      <div className="space-y-12 pb-24 lg:pb-12">
+        {sections.map((sec, i) => (
+          <section key={i} className="animate-in fade-in slide-in-from-bottom-4 duration-500" style={{ animationDelay: `${i * 100}ms` }}>
+            <h2 className="lg:text-2xl text-xl font-black text-slate-800 border-l-8 border-[#E34B87] pl-4 mb-6">{sec.title}</h2>
+            <div className="grid grid-cols-1 gap-3">
+              {sec.items.map((item, j) => (
+                <div key={j} className="flex gap-4 p-4 bg-slate-50/50 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
+                  <span className="flex-shrink-0 w-8 h-8 rounded-full bg-[#E34B87]/10 text-[#E34B87] flex items-center justify-center font-black text-sm">{j + 1}</span>
+                  <p className="text-slate-600 font-bold leading-relaxed lg:text-base text-sm">{item}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );
@@ -813,4 +921,474 @@ function ExhaustiveTable() {
   );
 }
 
-const LEGAL_LIST_DATA = LEGAL_LIST; // 為保持向下相容性或特定邏輯命名
+function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
+  const MINUTES_IN_DAY = 1440;
+  const TOTAL_MINUTES = MINUTES_IN_DAY * 3;
+  
+  const SIM_TYPES = [
+    { id: 'u2_day', name: '未滿2歲日間', color: 'bg-amber-100 border-amber-400 text-amber-800', catIdx: 0, isSelf: false, defaultH: 10, maxH: 16 },
+    { id: 'a2_day', name: '2歲以上日間', color: 'bg-orange-100 border-orange-400 text-orange-800', catIdx: 1, isSelf: false, defaultH: 10, maxH: 16 },
+    { id: 'u2_night', name: '未滿2歲夜間', color: 'bg-purple-100 border-purple-400 text-purple-800', catIdx: 2, isSelf: false, defaultH: 8, maxH: 16 },
+    { id: 'a2_night', name: '2歲以上夜間', color: 'bg-violet-100 border-violet-400 text-violet-800', catIdx: 3, isSelf: false, defaultH: 8, maxH: 16 },
+    { id: 'u2_full', name: '未滿2歲全日', color: 'bg-blue-100 border-blue-400 text-blue-800', catIdx: 4, isSelf: false, defaultH: 16, minH: 16 },
+    { id: 'a2_full', name: '2歲以上全日', color: 'bg-sky-100 border-sky-400 text-sky-800', catIdx: 5, isSelf: false, defaultH: 16, minH: 16 },
+    { id: 'u2_self', name: '未滿2歲自孩', color: 'bg-[#E34B87]/10 border-[#E34B87]/40 text-[#E34B87]', selfIdx: 0, isSelf: true, defaultH: 12 },
+    { id: 'a2_self_sent', name: '2-3歲送托自孩', color: 'bg-[#E34B87]/5 border-[#E34B87]/30 text-[#E34B87]', selfIdx: 1, isSelf: true, defaultH: 12 },
+    { id: 'a2_self_unsent', name: '2-3歲未送托自孩', color: 'bg-[#E34B87]/20 border-[#E34B87]/50 text-[#E34B87]', selfIdx: 2, isSelf: true, defaultH: 12 },
+  ];
+
+  const addEvent = (typeId: string) => {
+    const type = SIM_TYPES.find(t => t.id === typeId);
+    if (!type) return;
+    const newEvent = {
+      id: Math.random().toString(36).substr(2, 9),
+      typeId,
+      startMin: 480, // Default 8:00 AM Day 1
+      duration: type.defaultH * 60,
+    };
+    setEvents([...events, newEvent]);
+  };
+
+  const updateEvent = (id: string, updates: any) => {
+    setEvents(events.map((e: any) => e.id === id ? { ...e, ...updates } : e));
+  };
+
+  const removeEvent = (id: string) => {
+    setEvents(events.filter((e: any) => e.id !== id));
+  };
+
+  // 額度檢核邏輯
+  const dayStats = useMemo(() => {
+    return [0, 1, 2].map(dayIdx => {
+      const dayStart = dayIdx * MINUTES_IN_DAY;
+      const dayEnd = (dayIdx + 1) * MINUTES_IN_DAY;
+      
+      const dayEvents = events.filter((e: any) => {
+        const eventEnd = e.startMin + e.duration;
+        return e.startMin < dayEnd && eventEnd > dayStart;
+      });
+
+      const counts = [0, 0, 0, 0, 0, 0];
+      const selfProfile = [0, 0, 0];
+      
+      dayEvents.forEach((e: any) => {
+        const type = SIM_TYPES.find(t => t.id === e.typeId);
+        if (!type) return;
+        if (type.isSelf) {
+          selfProfile[type.selfIdx!]++;
+        } else {
+          counts[type.catIdx!]++;
+        }
+      });
+
+      // 轉換自孩為收托兒童統計樣式 (比照自孩模式同步逻辑)
+      const fullCounts = [...counts];
+      fullCounts[2] += selfProfile[0]; // 未2自->未2夜
+      fullCounts[3] += selfProfile[1]; // 2-3外自->2上夜
+      fullCounts[5] += selfProfile[2]; // 2-3無自->2上全
+
+      const hasSelfChild = dayEvents.some(e => {
+        const t = SIM_TYPES.find(type => type.id === e.typeId);
+        return t?.isSelf;
+      });
+
+      // 額度計算
+      // 只有當該時段確實包含自孩時，才允許使用自孩特例組合表
+      let fullList = hasSelfChild ? [...LEGAL_LIST, ...SELF_EXCEPTIONS] : LEGAL_LIST;
+      
+      // 基本額度檢查 (基於組合表)
+      const isListValid = fullList.some(row => fullCounts.every((v, i) => v <= row[i]));
+      
+      // 未滿2歲檢查 (總量<=2)
+      const u2Total = fullCounts[0] + fullCounts[2] + fullCounts[4];
+      const isU2Valid = u2Total <= 2;
+
+      // 權重計算與特例處理
+      // 特例：當出現兩個(含以上)一般夜間/全日托育時，二歲以上的一般夜間算1人額度
+      // 注意：自孩在此計算中計為 1 點，且「不觸發」一般夜間的點數調降，以符合 4人上限之判定
+      const normalNightEvents = dayEvents.filter(e => {
+        const t = SIM_TYPES.find(type => type.id === e.typeId);
+        return !t?.isSelf && (e.typeId.includes('night') || e.typeId.includes('full'));
+      });
+      const normalNightCount = normalNightEvents.length;
+      
+      let totalPoints = 0;
+      dayEvents.forEach((e: any) => {
+        const type = SIM_TYPES.find(t => t.id === e.typeId);
+        if (!type) return;
+        
+        let weight = 1;
+        if (type.id.includes('full') || type.id.includes('night') || type.isSelf) {
+          if (type.isSelf) {
+            weight = 1; 
+          } else {
+            // 一般全日與夜間通常是 2
+            // 特例：2歲以上一般夜間，若總共有 2個以上一般夜間時，變回 1
+            if (normalNightCount >= 2 && type.id === 'a2_night') {
+              weight = 1;
+            } else {
+              weight = 2;
+            }
+          }
+        } else {
+          weight = 1; // 日間就是 1
+        }
+        totalPoints += weight;
+      });
+
+      const isValid = isListValid && isU2Valid && totalPoints <= 4;
+      const childCount = dayEvents.length;
+
+      // 計算建議收托 (比照其他模式)
+      const suggestions: { name: string; extra: number; catIdx: number }[] = [];
+      if (isValid && totalPoints < 4) {
+        [0, 1, 2, 3, 4, 5].forEach(idx => {
+          let tempCounts = [...counts];
+          let extra = 0;
+          while (true) {
+            tempCounts[idx]++;
+            
+            // 重新計算全數
+            const tempFull = [...tempCounts];
+            tempFull[2] += selfProfile[0];
+            tempFull[3] += selfProfile[1];
+            tempFull[5] += selfProfile[2];
+
+            const tempU2 = tempFull[0] + tempFull[2] + tempFull[4];
+            
+            // 重新計算點數 (考慮特例)
+            // 這裡簡化模擬：假想新增的是日間/夜間/全日事件
+            // 夜間點數計算需要知道總夜間數
+            const tempNightCount = normalNightCount + (idx === 2 || idx === 3 || idx === 4 || idx === 5 ? 1 : 0);
+            
+            let tempPoints = 0;
+            // 原本的點數
+            tempPoints = totalPoints;
+            // 新增者的點數
+            if (idx === 0 || idx === 1) tempPoints += 1;
+            else if (idx === 2 || idx === 4 || idx === 5) tempPoints += 2;
+            else if (idx === 3) {
+              // 如果新增的是 2歲以上夜間，且總夜間 >= 2，則算 1
+              if (tempNightCount >= 2) tempPoints += 1;
+              else tempPoints += 2;
+            }
+
+            const tempValid = fullList.some(r => tempFull.every((v, i) => v <= r[i])) && tempU2 <= 2 && tempPoints <= 4;
+            
+            if (tempValid) {
+              extra++;
+            } else {
+              break;
+            }
+          }
+          if (extra > 0) {
+            suggestions.push({
+              name: CATEGORIES[idx].name,
+              extra,
+              catIdx: idx
+            });
+          }
+        });
+      }
+
+      return {
+        isValid,
+        total: totalPoints,
+        childCount,
+        isFull: isValid && suggestions.length === 0,
+        suggestions
+      };
+    });
+  }, [events]);
+
+  // 自動軌道計算 (包裝在 useMemo 避免重算)
+  const tracks = useMemo(() => {
+    const sortedEvents = [...events].sort((a, b) => a.startMin - b.startMin);
+    const result: number[] = [];
+    const eventTracks: Record<string, number> = {};
+
+    sortedEvents.forEach(e => {
+      let trackIdx = 0;
+      while (true) {
+        const lastEventInTrack = sortedEvents.find(prev => 
+          eventTracks[prev.id] === trackIdx && (prev.startMin + prev.duration) > e.startMin
+        );
+        if (!lastEventInTrack) {
+          eventTracks[e.id] = trackIdx;
+          break;
+        }
+        trackIdx++;
+      }
+    });
+    return eventTracks;
+  }, [events]);
+
+  return (
+    <div className="h-full flex flex-col space-y-2 lg:space-y-6 overflow-hidden select-none">
+      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center shrink-0 px-1 gap-2">
+        <h2 className="lg:text-4xl text-xl font-black text-slate-900 tracking-tight whitespace-nowrap">時段模擬器</h2>
+        <div className="flex gap-2 overflow-x-auto lg:flex-wrap lg:justify-end pb-2 lg:pb-0 custom-scrollbar touch-pan-x no-scrollbar">
+          {SIM_TYPES.map(t => (
+            <button 
+              key={t.id} 
+              onClick={() => addEvent(t.id)}
+              className={`px-2 py-1 lg:px-3 lg:py-1.5 rounded-xl border text-[9px] lg:text-[10px] font-black transition-all hover:scale-105 active:scale-95 shadow-sm flex items-center gap-1.5 shrink-0 ${t.color}`}
+            >
+              <span className="opacity-60 scale-90">
+                {t.id.includes('day') ? <Sun size={12} /> : t.id.includes('night') ? <Moon size={12} /> : t.isSelf ? <Baby size={12} /> : <HomeIcon size={12} />}
+              </span>
+              + {t.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 時間軸區域 - 手機版滾動層 */}
+      <div className="flex-1 overflow-x-auto custom-scrollbar touch-pan-x relative rounded-2xl lg:rounded-[32px] border-2 border-slate-200" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div ref={screenshotRef} className="min-w-[1024px] lg:w-full min-h-full bg-slate-50 relative flex flex-col p-4 lg:p-6 shadow-inner">
+          {/* 時間軸刻度 */}
+          <div className="h-10 flex relative border-b-2 border-slate-200 mb-6 shrink-0 bg-white/50 rounded-t-xl sticky top-0 z-20">
+            {[0, 1, 2].map(day => (
+              <div key={day} className="flex-1 relative flex">
+                <div className="absolute top-0 left-0 right-0 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest pt-1 border-l-2 border-slate-300 bg-slate-100/50 h-6">
+                  Day {day + 1}
+                </div>
+                <div className="flex w-full mt-6 h-full">
+                  {Array.from({ length: 24 }).map((_, hr) => (
+                    <div key={hr} className={`flex-1 border-l border-slate-200 flex items-end pb-1 relative ${hr % 6 === 0 ? 'border-l-4 border-slate-400' : ''}`}>
+                      {hr % 6 === 0 && <span className="text-[11px] font-black text-slate-600 absolute bottom-1 left-1 z-30 bg-white/80 px-1 rounded shadow-sm">{String(hr).padStart(2, '0')}:00</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* 軌道內容 */}
+          <div className="flex-1 relative pb-12 min-h-[400px]">
+            {/* 背景輔助線 */}
+            <div className="absolute inset-0 flex pointer-events-none">
+              {[0, 1, 2].map(day => (
+                <div key={day} className={`flex-1 flex border-slate-400 ${day > 0 ? 'border-l-4' : ''}`}>
+                  {Array.from({ length: 24 }).map((_, hr) => (
+                    <div key={hr} className={`flex-1 border-l border-slate-200/50 ${hr % 6 === 0 ? 'border-l-2 border-slate-300/30' : ''}`} />
+                  ))}
+                </div>
+              ))}
+            </div>
+
+            <div className="relative z-10 flex flex-col min-h-[300px]">
+              {events.map((e: any) => {
+                const type = SIM_TYPES.find(t => t.id === e.typeId);
+                return (
+                  <TimelineEvent 
+                    key={e.id} 
+                    event={e} 
+                    type={type} 
+                    trackIdx={tracks[e.id]}
+                    onUpdate={(updates: any) => updateEvent(e.id, updates)}
+                    onRemove={() => removeEvent(e.id)}
+                    MINUTES_IN_DAY={MINUTES_IN_DAY}
+                    TOTAL_MINUTES={TOTAL_MINUTES}
+                  />
+                );
+              })}
+            </div>
+            
+            {events.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
+                 <p className="text-2xl font-black italic text-slate-400 tracking-widest uppercase">請點選上方按鈕新增收托兒童長條</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 底部摘要卡片 - 手機版獨立滾動 */}
+      <div className="shrink-0 overflow-x-auto touch-pan-x custom-scrollbar pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+        <div className="flex gap-3 min-w-fit px-1">
+          {dayStats.map((stat, i) => (
+            <div key={i} className={`w-[280px] lg:flex-1 h-20 lg:h-28 lg:p-4 p-3 rounded-2xl lg:rounded-[2rem] border-2 shadow-2xl flex items-center transition-all ${
+              stat.isValid ? 'bg-white border-slate-100' : 'bg-rose-50 border-rose-200'
+            }`}>
+              <div className="flex items-center gap-4 w-full">
+                {/* 左側：核心數據 */}
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex flex-col shrink-0">
+                    <span className="text-[8px] lg:text-[10px] font-black text-slate-400 uppercase tracking-tighter">Day {i+1}</span>
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-[8px] lg:text-[9px] font-bold text-slate-400 whitespace-nowrap">目前</span>
+                      <span className={`text-xl lg:text-2xl font-black ${stat.isValid ? 'text-slate-900' : 'text-rose-600'}`}>{stat.childCount}</span>
+                      <span className="text-[8px] lg:text-[10px] font-bold text-slate-300">人</span>
+                    </div>
+                  </div>
+                  
+                  <div className="shrink-0 flex items-center">
+                    {stat.isValid ? (
+                      <span className="px-2 py-1 lg:px-3 lg:py-2 bg-emerald-500 text-white rounded-lg lg:rounded-xl text-[8px] lg:text-[10px] font-black shadow-md border-b-2 border-emerald-700 whitespace-nowrap">符合</span>
+                    ) : (
+                      <span className="px-2 py-1 lg:px-3 lg:py-2 bg-rose-500 text-white rounded-lg lg:rounded-xl text-[8px] lg:text-[10px] font-black shadow-md border-b-2 border-rose-700 animate-pulse whitespace-nowrap">超收</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* 右側：收托建議 */}
+                <div className="flex-1 flex items-center gap-1 lg:gap-2 border-l border-slate-100 pl-2 lg:pl-4 h-full overflow-visible min-w-0">
+                  <span className="text-[8px] lg:text-[9px] font-black text-slate-400 uppercase vertical-text whitespace-nowrap shrink-0">仍可收托</span>
+                  <div className="flex-1 flex items-center justify-center overflow-visible px-1">
+                    {stat.isFull ? (
+                      <div className="px-2 py-1 lg:px-3 lg:py-2 bg-slate-900 text-white rounded-lg lg:rounded-xl text-[8px] lg:text-[10px] font-black shadow-lg flex items-center gap-1.5 whitespace-nowrap">
+                        <Star size={10} fill="currentColor"/> 上限
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-x-1 lg:gap-x-1.5 gap-y-0.5 lg:gap-y-1 w-full max-w-[160px] lg:max-w-[240px] mx-auto overflow-visible">
+                        {stat.suggestions.map((s, idx) => {
+                          const isU2 = s.catIdx % 2 === 0;
+                          return (
+                            <div key={idx} className="flex items-center justify-center gap-0.5 lg:gap-1 bg-slate-100 border border-slate-200 px-1 lg:px-1.5 py-0.5 lg:py-1 rounded-md lg:rounded-lg shrink-0 shadow-sm min-w-0 overflow-hidden">
+                              <span className="opacity-80 scale-[0.65] lg:scale-90 shrink-0 origin-center">{CATEGORIES[s.catIdx].icon}</span>
+                              <span className="text-[7px] lg:text-[10px] font-black text-slate-600 flex items-center gap-0.5 whitespace-nowrap">
+                                2{isU2 ? '↓' : '↑'}<span className="text-[#E34B87] ml-0.5">{s.extra}</span>
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_MINUTES, trackIdx }: any) {
+  const leftPct = (event.startMin / TOTAL_MINUTES) * 100;
+  const widthPct = (event.duration / TOTAL_MINUTES) * 100;
+
+  const displayDuration = useMemo(() => {
+    const totalHours = event.duration / 60;
+    if (totalHours >= 24) {
+      const d = Math.floor(totalHours / 24);
+      const h = Math.round(totalHours % 24);
+      return h > 0 ? `${d}d ${h}h` : `${d}d`;
+    }
+    return `${Math.round(totalHours * 10) / 10}h`;
+  }, [event.duration]);
+
+  const handlePointerDown = (e: React.PointerEvent, action: 'drag' | 'resize-left' | 'resize-right') => {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.stopPropagation();
+    
+    const container = e.currentTarget.closest('.custom-scrollbar') as HTMLElement;
+    if (!container) return;
+    const totalWidth = container.scrollWidth;
+    const pxPerMin = totalWidth / TOTAL_MINUTES;
+    const startX = e.clientX;
+    const initialStart = event.startMin;
+    const initialDuration = event.duration;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaMin = deltaX / pxPerMin;
+      
+      if (action === 'drag') {
+        const newStart = Math.max(0, Math.min(TOTAL_MINUTES - event.duration, initialStart + deltaMin));
+        onUpdate({ startMin: newStart });
+      } else if (action === 'resize-right') {
+        let newDuration = initialDuration + deltaMin;
+        if (type.maxH) newDuration = Math.min(newDuration, type.maxH * 60);
+        if (type.minH) newDuration = Math.max(newDuration, type.minH * 60);
+        newDuration = Math.max(30, Math.min(TOTAL_MINUTES - event.startMin, newDuration));
+        onUpdate({ duration: newDuration });
+      } else if (action === 'resize-left') {
+        let newStart = initialStart + deltaMin;
+        let newDuration = initialDuration - deltaMin;
+        
+        // 限制移動與長度
+        if (newDuration < 30) {
+           const diff = 30 - newDuration;
+           newDuration = 30;
+           newStart -= diff;
+        }
+        if (type.maxH && newDuration > type.maxH * 60) {
+           const diff = newDuration - (type.maxH * 60);
+           newDuration = type.maxH * 60;
+           newStart += diff;
+        }
+        if (type.minH && newDuration < type.minH * 60) {
+           const diff = (type.minH * 60) - newDuration;
+           newDuration = type.minH * 60;
+           newStart -= diff;
+        }
+
+        newStart = Math.max(0, newStart);
+        onUpdate({ startMin: newStart, duration: newDuration });
+      }
+    };
+
+    const onPointerUp = (upEvent: PointerEvent) => {
+      (e.target as HTMLElement).releasePointerCapture(upEvent.pointerId);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+  };
+
+  return (
+    <div 
+      className="absolute flex items-center group h-12 transition-all duration-300"
+      style={{ 
+        left: `${leftPct}%`, 
+        width: `${widthPct}%`,
+        top: `${trackIdx * 56}px`,
+        touchAction: 'pan-y'
+      }}
+    >
+      <div 
+        onPointerDown={(e) => handlePointerDown(e, 'drag')}
+        className={`w-full h-full rounded-xl border-2 shadow-sm flex items-center justify-between px-3 cursor-grab active:cursor-grabbing select-none overflow-hidden hover:brightness-95 transition-all ${type.color}`}
+      >
+        {/* 左側調整手把 */}
+        <div 
+          onPointerDown={(e) => handlePointerDown(e, 'resize-left')}
+          className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-black/10 flex items-center justify-center z-10"
+        >
+          <div className="w-1 h-4 bg-current opacity-30 rounded-full" />
+        </div>
+
+        <div className="flex items-center gap-2 min-w-0 overflow-hidden mx-auto px-1">
+          <span className="opacity-60 shrink-0 scale-110">
+            {type.id.includes('day') ? <Sun size={14} /> : type.id.includes('night') ? <Moon size={14} /> : type.isSelf ? <Baby size={14} /> : <HomeIcon size={14} />}
+          </span>
+          <div className="flex flex-col min-w-0 leading-tight">
+            <span className="text-[11px] font-black truncate leading-none">{type.name}</span>
+            <span className="text-[9px] font-bold opacity-60 leading-none mt-0.5">{displayDuration}</span>
+          </div>
+        </div>
+        
+        <button 
+          onPointerDown={(e)=>e.stopPropagation()} 
+          onClick={onRemove} 
+          className="p-1 hover:bg-black/5 rounded text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute right-4"
+        >
+          <X size={14} />
+        </button>
+
+        {/* 右側調整手把 */}
+        <div 
+          onPointerDown={(e) => handlePointerDown(e, 'resize-right')}
+          className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize hover:bg-black/10 flex items-center justify-center z-10"
+        >
+          <div className="w-1 h-4 bg-current opacity-30 rounded-full" />
+        </div>
+      </div>
+    </div>
+  );
+}
