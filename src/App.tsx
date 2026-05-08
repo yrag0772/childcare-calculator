@@ -18,6 +18,7 @@ import {
   Users,
   Plus,
   Minus,
+  Copy,
   Table as TableIcon,
   ArrowUpDown,
   Star,
@@ -89,6 +90,7 @@ export default function App() {
 
   // 時段模擬器狀態
   const [simEvents, setSimEvents] = useState<any[]>([]);
+  const [dragInfo, setDragInfo] = useState<{ id: string; start: number; end: number } | null>(null);
   const simScreenshotRef = useRef<HTMLDivElement>(null);
 
   const takeSimScreenshot = async () => {
@@ -302,7 +304,7 @@ export default function App() {
 
         {/* 中間面板 */}
         <main className={`flex-1 lg:p-8 p-4 flex flex-col overflow-hidden ${['list', 'sim', 'help'].includes(tab) ? 'bg-white' : ''}`}>
-           {tab === 'list' ? <ExhaustiveTable /> : tab === 'sim' ? <ScheduleSimulator events={simEvents} setEvents={setSimEvents} screenshotRef={simScreenshotRef}/> : tab === 'help' ? <HelpContent /> : (
+           {tab === 'list' ? <ExhaustiveTable /> : tab === 'sim' ? <ScheduleSimulator events={simEvents} setEvents={setSimEvents} screenshotRef={simScreenshotRef} dragInfo={dragInfo} setDragInfo={setDragInfo}/> : tab === 'help' ? <HelpContent /> : (
              <div className="max-w-5xl mx-auto w-full h-full flex flex-col lg:space-y-6 space-y-4 overflow-hidden relative">
                 
                 {/* 手機版專屬：自孩設定區 (固定在最上方) */}
@@ -921,7 +923,7 @@ function ExhaustiveTable() {
   );
 }
 
-function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
+function ScheduleSimulator({ events, setEvents, screenshotRef, dragInfo, setDragInfo }: any) {
   const MINUTES_IN_DAY = 1440;
   const TOTAL_MINUTES = MINUTES_IN_DAY * 3;
   
@@ -945,6 +947,7 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
       typeId,
       startMin: 480, // Default 8:00 AM Day 1
       duration: type.defaultH * 60,
+      childName: '',
     };
     setEvents([...events, newEvent]);
   };
@@ -955,6 +958,15 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
 
   const removeEvent = (id: string) => {
     setEvents(events.filter((e: any) => e.id !== id));
+  };
+
+  const duplicateEvent = (event: any) => {
+    const newEvent = {
+      ...event,
+      id: Math.random().toString(36).substr(2, 9),
+      startMin: Math.min(TOTAL_MINUTES - event.duration, event.startMin + 30), // 向後偏移 30 分鐘方便辨識
+    };
+    setEvents([...events, newEvent]);
   };
 
   // 額度檢核邏輯
@@ -971,15 +983,27 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
       const counts = [0, 0, 0, 0, 0, 0];
       const selfProfile = [0, 0, 0];
       
+      // 修正後的計數邏輯：依據類別與姓名去重
+      const categoryToChildren = Array.from({ length: 6 }, () => new Set<string>());
+      const selfToChildren = Array.from({ length: 3 }, () => new Set<string>());
+      const allChildIdsAtDay = new Set<string>();
+
       dayEvents.forEach((e: any) => {
         const type = SIM_TYPES.find(t => t.id === e.typeId);
-        if (!type) return;
+        if (!type || !type.id) return;
+        const childId = e.childName?.trim() || e.id;
+        
+        allChildIdsAtDay.add(childId);
         if (type.isSelf) {
-          selfProfile[type.selfIdx!]++;
+          selfToChildren[type.selfIdx!].add(childId);
         } else {
-          counts[type.catIdx!]++;
+          categoryToChildren[type.catIdx!].add(childId);
         }
       });
+
+      // 填入 counts
+      categoryToChildren.forEach((set, i) => counts[i] = set.size);
+      selfToChildren.forEach((set, i) => selfProfile[i] = set.size);
 
       // 轉換自孩為收托兒童統計樣式 (比照自孩模式同步逻辑)
       const fullCounts = [...counts];
@@ -987,10 +1011,7 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
       fullCounts[3] += selfProfile[1]; // 2-3外自->2上夜
       fullCounts[5] += selfProfile[2]; // 2-3無自->2上全
 
-      const hasSelfChild = dayEvents.some(e => {
-        const t = SIM_TYPES.find(type => type.id === e.typeId);
-        return t?.isSelf;
-      });
+      const hasSelfChild = selfProfile.some(count => count > 0);
 
       // 額度計算
       // 只有當該時段確實包含自孩時，才允許使用自孩特例組合表
@@ -1003,41 +1024,54 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
       const u2Total = fullCounts[0] + fullCounts[2] + fullCounts[4];
       const isU2Valid = u2Total <= 2;
 
-      // 權重計算與特例處理
-      // 特例：當出現兩個(含以上)一般夜間/全日托育時，二歲以上的一般夜間算1人額度
-      // 注意：自孩在此計算中計為 1 點，且「不觸發」一般夜間的點數調降，以符合 4人上限之判定
-      const normalNightEvents = dayEvents.filter(e => {
-        const t = SIM_TYPES.find(type => type.id === e.typeId);
-        return !t?.isSelf && (e.typeId.includes('night') || e.typeId.includes('full'));
-      });
-      const normalNightCount = normalNightEvents.length;
-      
-      let totalPoints = 0;
+      // 算出一般收托中，參與夜間或全日的小孩數量 (用於判斷點數調降)
+      let normalNightChildCount = 0;
+      const childrenCategories: Record<string, Set<string>> = {};
+
       dayEvents.forEach((e: any) => {
-        const type = SIM_TYPES.find(t => t.id === e.typeId);
-        if (!type) return;
-        
-        let weight = 1;
-        if (type.id.includes('full') || type.id.includes('night') || type.isSelf) {
-          if (type.isSelf) {
-            weight = 1; 
-          } else {
-            // 一般全日與夜間通常是 2
-            // 特例：2歲以上一般夜間，若總共有 2個以上一般夜間時，變回 1
-            if (normalNightCount >= 2 && type.id === 'a2_night') {
-              weight = 1;
-            } else {
-              weight = 2;
-            }
-          }
-        } else {
-          weight = 1; // 日間就是 1
+        const childId = e.childName?.trim() || e.id;
+        const t = SIM_TYPES.find(type => type.id === e.typeId);
+        if (!t) return;
+        if (!childrenCategories[childId]) childrenCategories[childId] = new Set();
+        childrenCategories[childId].add(e.typeId);
+      });
+
+      Object.keys(childrenCategories).forEach(childId => {
+        const cats = childrenCategories[childId];
+        const isSelf = Array.from(cats).some(cid => SIM_TYPES.find(t => t.id === cid)?.isSelf);
+        if (!isSelf) {
+          const hasNightOrFull = Array.from(cats).some(cid => cid.includes('night') || cid.includes('full'));
+          if (hasNightOrFull) normalNightChildCount++;
         }
-        totalPoints += weight;
+      });
+
+      let totalPoints = 0;
+      Object.keys(childrenCategories).forEach(childId => {
+        const cats = Array.from(childrenCategories[childId]);
+        const isSelf = cats.some(cid => SIM_TYPES.find(t => t.id === cid)?.isSelf);
+        
+        if (isSelf) {
+          totalPoints += 1;
+        } else {
+          // 一般收托
+          const hasFull = cats.some(cid => cid.includes('full'));
+          const hasNight = cats.some(cid => cid.includes('night'));
+          const hasNightU2 = cats.some(cid => cid === 'u2_night');
+          const hasNightA2 = cats.some(cid => cid === 'a2_night');
+
+          if (hasFull || hasNightU2) {
+            totalPoints += 2;
+          } else if (hasNightA2) {
+            totalPoints += (normalNightChildCount >= 2 ? 1 : 2);
+          } else {
+            // 純日間
+            totalPoints += 1;
+          }
+        }
       });
 
       const isValid = isListValid && isU2Valid && totalPoints <= 4;
-      const childCount = dayEvents.length;
+      const childCount = allChildIdsAtDay.size;
 
       // 計算建議收托 (比照其他模式)
       const suggestions: { name: string; extra: number; catIdx: number }[] = [];
@@ -1057,18 +1091,13 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
             const tempU2 = tempFull[0] + tempFull[2] + tempFull[4];
             
             // 重新計算點數 (考慮特例)
-            // 這裡簡化模擬：假想新增的是日間/夜間/全日事件
-            // 夜間點數計算需要知道總夜間數
-            const tempNightCount = normalNightCount + (idx === 2 || idx === 3 || idx === 4 || idx === 5 ? 1 : 0);
+            const tempNightCount = normalNightChildCount + (idx === 2 || idx === 3 || idx === 4 || idx === 5 ? 1 : 0);
             
-            let tempPoints = 0;
-            // 原本的點數
-            tempPoints = totalPoints;
+            let tempPoints = totalPoints;
             // 新增者的點數
             if (idx === 0 || idx === 1) tempPoints += 1;
             else if (idx === 2 || idx === 4 || idx === 5) tempPoints += 2;
             else if (idx === 3) {
-              // 如果新增的是 2歲以上夜間，且總夜間 >= 2，則算 1
               if (tempNightCount >= 2) tempPoints += 1;
               else tempPoints += 2;
             }
@@ -1188,11 +1217,42 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
                     trackIdx={tracks[e.id]}
                     onUpdate={(updates: any) => updateEvent(e.id, updates)}
                     onRemove={() => removeEvent(e.id)}
+                    onDuplicate={() => duplicateEvent(e)}
                     MINUTES_IN_DAY={MINUTES_IN_DAY}
                     TOTAL_MINUTES={TOTAL_MINUTES}
+                    setDragInfo={setDragInfo}
                   />
                 );
               })}
+              
+              {/* 拖移時間顯示 */}
+              <AnimatePresence>
+                {dragInfo && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="fixed bottom-32 left-1/2 -translate-x-1/2 z-[100] pointer-events-none"
+                  >
+                    <div className="bg-slate-900/90 backdrop-blur-md text-white px-8 py-4 rounded-[2rem] shadow-2xl flex items-center gap-6 border border-white/20">
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black opacity-50 uppercase tracking-widest">開始時間</span>
+                        <span className="text-2xl font-black tabular-nums">{formatTime(dragInfo.start)}</span>
+                      </div>
+                      <div className="w-px h-8 bg-white/20" />
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black opacity-50 uppercase tracking-widest">結束時間</span>
+                        <span className="text-2xl font-black tabular-nums">{formatTime(dragInfo.end)}</span>
+                      </div>
+                      <div className="w-px h-8 bg-white/20" />
+                      <div className="flex flex-col items-center">
+                        <span className="text-[10px] font-black opacity-50 uppercase tracking-widest">總時數</span>
+                        <span className="text-2xl font-black tabular-nums text-emerald-400">{(dragInfo.end - dragInfo.start) / 60}h</span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
             
             {events.length === 0 && (
@@ -1266,7 +1326,7 @@ function ScheduleSimulator({ events, setEvents, screenshotRef }: any) {
   );
 }
 
-function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_MINUTES, trackIdx }: any) {
+function TimelineEvent({ event, type, onUpdate, onRemove, onDuplicate, MINUTES_IN_DAY, TOTAL_MINUTES, trackIdx, setDragInfo }: any) {
   const leftPct = (event.startMin / TOTAL_MINUTES) * 100;
   const widthPct = (event.duration / TOTAL_MINUTES) * 100;
 
@@ -1280,6 +1340,8 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
     return `${Math.round(totalHours * 10) / 10}h`;
   }, [event.duration]);
 
+  const snapTo30Min = (min: number) => Math.round(min / 30) * 30;
+
   const handlePointerDown = (e: React.PointerEvent, action: 'drag' | 'resize-left' | 'resize-right') => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     e.stopPropagation();
@@ -1292,22 +1354,27 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
     const initialStart = event.startMin;
     const initialDuration = event.duration;
 
+    setDragInfo({ id: event.id, start: initialStart, end: initialStart + initialDuration });
+
     const onPointerMove = (moveEvent: PointerEvent) => {
       const deltaX = moveEvent.clientX - startX;
+      // 這裡不直接在 deltaMin snap，而是在最後結果 snap
       const deltaMin = deltaX / pxPerMin;
       
       if (action === 'drag') {
-        const newStart = Math.max(0, Math.min(TOTAL_MINUTES - event.duration, initialStart + deltaMin));
+        const newStart = snapTo30Min(Math.max(0, Math.min(TOTAL_MINUTES - event.duration, initialStart + deltaMin)));
         onUpdate({ startMin: newStart });
+        setDragInfo({ id: event.id, start: newStart, end: newStart + initialDuration });
       } else if (action === 'resize-right') {
-        let newDuration = initialDuration + deltaMin;
+        let newDuration = snapTo30Min(initialDuration + deltaMin);
         if (type.maxH) newDuration = Math.min(newDuration, type.maxH * 60);
         if (type.minH) newDuration = Math.max(newDuration, type.minH * 60);
         newDuration = Math.max(30, Math.min(TOTAL_MINUTES - event.startMin, newDuration));
         onUpdate({ duration: newDuration });
+        setDragInfo({ id: event.id, start: initialStart, end: initialStart + newDuration });
       } else if (action === 'resize-left') {
-        let newStart = initialStart + deltaMin;
-        let newDuration = initialDuration - deltaMin;
+        let newStart = snapTo30Min(initialStart + deltaMin);
+        let newDuration = snapTo30Min(initialDuration - (newStart - initialStart));
         
         // 限制移動與長度
         if (newDuration < 30) {
@@ -1328,6 +1395,7 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
 
         newStart = Math.max(0, newStart);
         onUpdate({ startMin: newStart, duration: newDuration });
+        setDragInfo({ id: event.id, start: newStart, end: newStart + newDuration });
       }
     };
 
@@ -1335,6 +1403,7 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
       (e.target as HTMLElement).releasePointerCapture(upEvent.pointerId);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      setDragInfo(null);
     };
 
     window.addEventListener('pointermove', onPointerMove);
@@ -1348,12 +1417,13 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
         left: `${leftPct}%`, 
         width: `${widthPct}%`,
         top: `${trackIdx * 56}px`,
-        touchAction: 'pan-y'
+        touchAction: 'pan-y',
+        zIndex: 10
       }}
     >
       <div 
         onPointerDown={(e) => handlePointerDown(e, 'drag')}
-        className={`w-full h-full rounded-xl border-2 shadow-sm flex items-center justify-between px-3 cursor-grab active:cursor-grabbing select-none overflow-hidden hover:brightness-95 transition-all ${type.color}`}
+        className={`w-full h-full rounded-xl border-2 shadow-sm flex items-center justify-between px-3 cursor-grab active:cursor-grabbing select-none overflow-visible hover:brightness-95 transition-all ${type.color}`}
       >
         {/* 左側調整手把 */}
         <div 
@@ -1363,23 +1433,43 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
           <div className="w-1 h-4 bg-current opacity-30 rounded-full" />
         </div>
 
-        <div className="flex items-center gap-2 min-w-0 overflow-hidden mx-auto px-1">
+        <div 
+          className="flex items-center gap-2 min-w-0 overflow-hidden mx-auto px-1 relative pointer-events-auto"
+        >
           <span className="opacity-60 shrink-0 scale-110">
             {type.id.includes('day') ? <Sun size={14} /> : type.id.includes('night') ? <Moon size={14} /> : type.isSelf ? <Baby size={14} /> : <HomeIcon size={14} />}
           </span>
           <div className="flex flex-col min-w-0 leading-tight">
-            <span className="text-[11px] font-black truncate leading-none">{type.name}</span>
-            <span className="text-[9px] font-bold opacity-60 leading-none mt-0.5">{displayDuration}</span>
+            <input 
+              type="text"
+              placeholder="輸入托兒姓名"
+              value={event.childName || ''}
+              onChange={(e) => onUpdate({ childName: e.target.value })}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="text-[11px] font-black bg-transparent border-none p-0 focus:ring-0 placeholder:opacity-30 placeholder:italic w-full truncate leading-none"
+            />
+            <span className="text-[9px] font-bold opacity-60 leading-none mt-0.5">{type.name} • {displayDuration}</span>
           </div>
         </div>
         
-        <button 
-          onPointerDown={(e)=>e.stopPropagation()} 
-          onClick={onRemove} 
-          className="p-1 hover:bg-black/5 rounded text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 absolute right-4"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1 group-hover:opacity-100 opacity-0 transition-opacity absolute right-4 z-20">
+          <button 
+            onPointerDown={(e)=>e.stopPropagation()} 
+            onClick={onDuplicate} 
+            title="複製長條"
+            className="p-1 hover:bg-black/5 rounded text-emerald-600 transition-colors"
+          >
+            <Copy size={14} />
+          </button>
+          <button 
+            onPointerDown={(e)=>e.stopPropagation()} 
+            onClick={onRemove} 
+            title="刪除"
+            className="p-1 hover:bg-black/5 rounded text-rose-500 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
 
         {/* 右側調整手把 */}
         <div 
@@ -1391,4 +1481,11 @@ function TimelineEvent({ event, type, onUpdate, onRemove, MINUTES_IN_DAY, TOTAL_
       </div>
     </div>
   );
+}
+
+// 輔助函式
+function formatTime(min: number) {
+  const day = Math.floor(min / 1440) + 1;
+  const time = format(addMinutes(startOfDay(new Date()), min % 1440), 'HH:mm');
+  return `D${day} ${time}`;
 }
